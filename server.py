@@ -5,8 +5,6 @@
 import socket
 import threading
 import os
-import struct
-import time
 
 #Creating a socket object in general a tcp socket
 server = socket.socket(socket.AF_INET,socket.SOCK_STREAM)
@@ -76,48 +74,28 @@ def send_private(sender_conn, message, sender_name):
     except ValueError:
         sender_conn.send("Invalid private message format.".encode())
 
-
-def get_chunks(sender_conn):
-    size = struct.unpack(">I",sender_conn.recv(4))[0]
-    message = sender_conn.recv(size)
-    return message
-
-def send_chunk(recipient_conn,message):
-    size = len(message)
-    recipient_conn.send(struct.pack(">I",size))
-    recipient_conn.send(message)
-
 # Function to handle file transfer
 def handle_file_transfer(sender_conn, message, sender_name):
     try:
-        #first receive the receipients's name
-        recipient_username = get_chunks(sender_conn).decode()
-        print(f"1.{recipient_username}")
+        _, file_info = message.split('$', 1)
+        recipient_username, file_path = file_info.split(' ', 1)
+        print("The file path is:", file_path)
 
-        #Now let's get file name
-        file_path = get_chunks(sender_conn).decode()
-        print(f"2.{file_path}")
-
-
-        recipient_conn = client_online.get(recipient_username)[0]
+        recipient_conn = client_online.get(recipient_username)
 
         if recipient_conn:
-            #first sending a singal for client he needs to receive file
-            recipient_conn.send('file'.encode())
-            time.sleep(0.1)
+            recipient_conn[0].send(f"file {file_path}".encode())  # Send the raw file path
 
-            #Now just getting chunks and sending chunks
-            send_chunk(recipient_conn,sender_name.encode())
-            send_chunk(recipient_conn,file_path.encode())
+            sender_conn.send("File path sent to recipient.".encode())
 
-            content = get_chunks(sender_conn)
-            print(f"3.{content}")
-            send_chunk(recipient_conn,content)
+            # Now, sender (client1) will send the file data to the server
+            file_data = sender_conn.recv(1024)  # Adjust the buffer size as needed
 
-            # sender_conn.send(f"File path sent to {recipient_username}.".encode())
-            # file_data = get_chunks(sender_conn)
-            sender_conn.send(f"File sent successfully to {recipient_username}".encode())
+            while file_data:
+                recipient_conn[0].send(file_data)
+                file_data = sender_conn.recv(1024)  # Receive the next chunk
 
+            sender_conn.send("File sent.".encode())
         else:
             sender_conn.send(f"User '{recipient_username}' is not online.".encode())
 
@@ -137,8 +115,9 @@ def handle_client(conn, addr, username):
 
         while True:
             message = conn.recv(1024).decode()
+            print(f"Received message from {username}: {message}")
 
-            if not message or message.lower() == 'exit':
+            if message.lower() == 'exit':
                 break
 
             if message.startswith('/'):
@@ -150,8 +129,6 @@ def handle_client(conn, addr, username):
             else:
                 broadcast(f"{username}: {message}", username)
 
-    except ConnectionError:
-        print(f"Client {username} disconnected unexpectedly.")
     except Exception as e:
         print(f"Error handling client {username}: {e}")
 
@@ -166,7 +143,6 @@ def handle_client(conn, addr, username):
         # Remove the client from the online list
         del client_online[username]
         conn.close()
-
 
 #This beacuse we don't want server to stop unless we do
 print("The server is up and listening...")
